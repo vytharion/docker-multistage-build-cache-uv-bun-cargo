@@ -103,6 +103,23 @@ def test_cargo_deps_has_cargo_git_cache_mount():
     assert "/root/.cargo/git" in targets
 
 
+def test_uv_deps_has_uv_cache_mount():
+    targets = stage_cache_mount_targets(_lines(), "uv-deps")
+    assert "/root/.cache/uv" in targets, targets
+
+
+def test_bun_deps_has_bun_install_cache_mount():
+    targets = stage_cache_mount_targets(_lines(), "bun-deps")
+    assert "/root/.bun/install/cache" in targets, targets
+
+
+def test_every_dep_stage_has_a_cache_mount():
+    lines = _lines()
+    for stage in REQUIRED_DEP_STAGES:
+        targets = stage_cache_mount_targets(lines, stage)
+        assert targets, f"{stage} has no cache mounts"
+
+
 def test_cache_mounts_only_attach_to_dep_stages():
     base_targets = stage_cache_mount_targets(_lines(), "base")
     runtime_targets = stage_cache_mount_targets(_lines(), "runtime")

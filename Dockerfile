@@ -3,9 +3,10 @@
 # Multistage build for the polyglot monorepo.
 # Step 4 attaches BuildKit cache mounts to the cargo-deps stage so the
 # registry, git index, and target directory survive across builds.
-# Cache mounts are ephemeral per-RUN, so the registry is materialized
-# into a non-mounted directory at the end of the fetch step; the runtime
-# stage consumes that snapshot instead of the live mount.
+# Step 5 extends the same cache-mount pattern to the uv wheel cache and
+# the bun install cache: the per-toolchain caches live on long-lived
+# BuildKit mounts while the per-build artifact (.venv, node_modules)
+# stays on the regular filesystem so the runtime stage can COPY it.
 
 # ---- Shared toolchain base ---------------------------------------------
 FROM debian:12-slim AS base
@@ -33,14 +34,16 @@ FROM base AS uv-deps
 
 COPY pyproject.toml ./
 COPY services/api/pyproject.toml services/api/pyproject.toml
-RUN uv sync --no-install-project --no-dev || uv sync --no-install-project
+RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv,sharing=locked \
+    uv sync --no-install-project --no-dev || uv sync --no-install-project
 
 # ---- TypeScript dependency stage ---------------------------------------
 FROM base AS bun-deps
 
 COPY package.json ./
 COPY services/web/package.json services/web/package.json
-RUN bun install --no-save
+RUN --mount=type=cache,id=bun-cache,target=/root/.bun/install/cache,sharing=locked \
+    bun install --no-save
 
 # ---- Rust dependency stage ---------------------------------------------
 FROM base AS cargo-deps
