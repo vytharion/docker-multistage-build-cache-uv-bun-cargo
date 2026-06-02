@@ -1,0 +1,11 @@
+{
+  "name": "@polyglot/web",
+  "version": "0.1.0",
+  "description": "TypeScript web service member of the polyglot monorepo.",
+  "private": true,
+  "type": "module",
+  "module": "src/index.ts",
+  "scripts": {
+    "test": "bun test"
+  }
+}

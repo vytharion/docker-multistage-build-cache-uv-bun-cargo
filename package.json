@@ -1,0 +1,12 @@
+{
+  "name": "polyglot-monorepo",
+  "version": "0.1.0",
+  "description": "Polyglot monorepo skeleton driven by uv, bun, and cargo workspaces.",
+  "private": true,
+  "workspaces": [
+    "services/web"
+  ],
+  "scripts": {
+    "test": "bun test services/web"
+  }
+}

@@ -1,0 +1,12 @@
+[workspace]
+members = ["services/edge"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+
+[workspace.lints.clippy]
+all = "warn"
