@@ -1,0 +1,90 @@
+# Build the multistage Dockerfile on every push / PR with a
+# registry-backed BuildKit cache so that dep layers resolved on one
+# runner are reused by the next runner without rebuilding from scratch.
+#
+# Each dep stage (uv-deps, bun-deps, cargo-deps) writes its own cache
+# image under <registry>/<repo>/cache:<stage>, and the final runtime
+# stage reads from all three plus its own cache:runtime ref. The
+# cache-to mode is `max`, which exports every intermediate layer (not
+# just the final one) so subsequent runs can short-circuit deep into
+# the graph instead of stopping at the last reachable layer.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  CACHE_REPO: ghcr.io/${{ github.repository }}/cache
+
+jobs:
+  build:
+    name: build-and-cache
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build uv-deps stage with registry cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: uv-deps
+          push: false
+          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:uv-deps
+          cache-to: type=registry,ref=${{ env.CACHE_REPO }}:uv-deps,mode=max
+
+      - name: Build bun-deps stage with registry cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: bun-deps
+          push: false
+          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:bun-deps
+          cache-to: type=registry,ref=${{ env.CACHE_REPO }}:bun-deps,mode=max
+
+      - name: Build cargo-deps stage with registry cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: cargo-deps
+          push: false
+          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:cargo-deps
+          cache-to: type=registry,ref=${{ env.CACHE_REPO }}:cargo-deps,mode=max
+
+      - name: Build runtime image with cross-stage registry cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runtime
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: |
+            type=registry,ref=${{ env.CACHE_REPO }}:uv-deps
+            type=registry,ref=${{ env.CACHE_REPO }}:bun-deps
+            type=registry,ref=${{ env.CACHE_REPO }}:cargo-deps
+            type=registry,ref=${{ env.CACHE_REPO }}:runtime
+          cache-to: type=registry,ref=${{ env.CACHE_REPO }}:runtime,mode=max
