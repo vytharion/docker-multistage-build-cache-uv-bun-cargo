@@ -10,10 +10,16 @@ from dockerfile_shape import (
     has_stage,
     mentions,
     read_dockerfile_lines,
+    stage_base_image,
     stage_cache_mount_targets,
     stage_copies_path,
     stage_copy_sources,
+    stage_directive_line,
+    stage_has_directive,
+    stage_lines,
+    stage_mentions,
     stage_names,
+    stage_user,
 )
 
 DOCKERFILE = Path(__file__).resolve().parents[2] / "Dockerfile"
@@ -179,3 +185,77 @@ def test_dep_stages_never_copy_source_directories():
 def test_runtime_stage_does_copy_full_context():
     sources = stage_copy_sources(_lines(), "runtime")
     assert "." in sources, sources
+
+
+# ---- Step 7: slim runtime, non-root user, tini, healthcheck ----------
+
+
+NON_ROOT_FORBIDDEN_USERS = {"root", "0", "0:0"}
+
+
+def test_runtime_uses_slim_base_image():
+    image = stage_base_image(_lines(), "runtime")
+    assert image is not None, "runtime stage has no FROM image"
+    assert "slim" in image.lower(), f"runtime base image is not slim: {image}"
+
+
+def test_runtime_does_not_inherit_from_build_base():
+    image = stage_base_image(_lines(), "runtime")
+    assert image != "base", "runtime must start from a fresh slim image, not the toolchain-heavy base"
+
+
+def test_runtime_creates_dedicated_system_user():
+    runtime = "\n".join(stage_lines(_lines(), "runtime"))
+    assert "useradd" in runtime or "adduser" in runtime, runtime
+
+
+def test_runtime_drops_to_nonroot_user():
+    user = stage_user(_lines(), "runtime")
+    assert user is not None, "runtime never sets USER"
+    assert user not in NON_ROOT_FORBIDDEN_USERS, f"runtime runs as privileged user: {user}"
+
+
+def test_runtime_installs_tini_package():
+    runtime_lines = stage_lines(_lines(), "runtime")
+    install_lines = [line for line in runtime_lines if not line.strip().upper().startswith("ENTRYPOINT")]
+    assert any("tini" in line for line in install_lines), runtime_lines
+
+
+def test_runtime_entrypoint_invokes_tini():
+    line = stage_directive_line(_lines(), "runtime", "ENTRYPOINT")
+    assert line is not None, "runtime has no ENTRYPOINT"
+    assert "tini" in line, f"ENTRYPOINT does not invoke tini: {line}"
+
+
+def test_runtime_has_healthcheck():
+    assert stage_has_directive(_lines(), "runtime", "HEALTHCHECK")
+
+
+def test_runtime_healthcheck_declares_interval_and_timeout():
+    line = stage_directive_line(_lines(), "runtime", "HEALTHCHECK")
+    assert line is not None
+    assert "--interval=" in line, line
+    assert "--timeout=" in line, line
+
+
+def test_runtime_copies_chown_to_app_user():
+    runtime_lines = stage_lines(_lines(), "runtime")
+    copy_lines = [line for line in runtime_lines if line.strip().upper().startswith("COPY ")]
+    assert copy_lines, "runtime has no COPY directives"
+    chowned = [line for line in copy_lines if "--chown=" in line]
+    assert chowned, f"no runtime COPY uses --chown=: {copy_lines}"
+
+
+def test_runtime_uses_tini_exactly_twice():
+    # Once in the apt-get install list, once in ENTRYPOINT — anything
+    # more means a stray reference; anything less means the install or
+    # the entrypoint vanished.
+    assert stage_mentions(_lines(), "runtime", "tini") >= 2
+
+
+def test_base_stage_still_carries_build_toolchains():
+    # Defensive: the slim runtime split is only meaningful if `base` is
+    # still the heavy toolchain layer that the dep stages inherit from.
+    base = "\n".join(stage_lines(_lines(), "base"))
+    assert "build-essential" in base
+    assert "rustup" in base or "cargo" in base

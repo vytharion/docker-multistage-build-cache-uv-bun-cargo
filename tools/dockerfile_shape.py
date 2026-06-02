@@ -98,6 +98,57 @@ def stage_copies_path(lines: list[str], stage: str, path: str) -> bool:
     return path in stage_copy_sources(lines, stage)
 
 
+def stage_lines(lines: list[str], stage: str) -> list[str]:
+    return _lines_in_stage(lines, stage)
+
+
+def stage_base_image(lines: list[str], stage: str) -> str | None:
+    for line in lines:
+        if not _is_from_line(line):
+            continue
+        if _extract_stage_name(line) != stage:
+            continue
+        return _extract_from_image(line)
+    return None
+
+
+def stage_user(lines: list[str], stage: str) -> str | None:
+    last: str | None = None
+    for line in _lines_in_stage(lines, stage):
+        stripped = line.strip()
+        if not stripped.upper().startswith("USER "):
+            continue
+        last = stripped.split(None, 1)[1].strip()
+    return last
+
+
+def stage_has_directive(lines: list[str], stage: str, directive: str) -> bool:
+    return _find_directive_line(lines, stage, directive) is not None
+
+
+def stage_directive_line(lines: list[str], stage: str, directive: str) -> str | None:
+    return _find_directive_line(lines, stage, directive)
+
+
+def stage_mentions(lines: list[str], stage: str, needle: str) -> int:
+    return sum(1 for line in _lines_in_stage(lines, stage) if needle in line)
+
+
+def _find_directive_line(lines: list[str], stage: str, directive: str) -> str | None:
+    prefix = directive.upper() + " "
+    for line in _lines_in_stage(lines, stage):
+        if line.strip().upper().startswith(prefix):
+            return line.strip()
+    return None
+
+
+def _extract_from_image(line: str) -> str | None:
+    tokens = line.strip().split()
+    if len(tokens) < 2:
+        return None
+    return tokens[1]
+
+
 def _extract_copy_sources(line: str) -> list[str]:
     stripped = line.strip()
     if not stripped.upper().startswith("COPY "):
