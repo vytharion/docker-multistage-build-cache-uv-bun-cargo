@@ -19,6 +19,6 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["services/api/tests"]
-pythonpath = ["services/api/src"]
+testpaths = ["services/api/tests", "tools/tests"]
+pythonpath = ["services/api/src", "tools"]
 addopts = "-ra -q"
