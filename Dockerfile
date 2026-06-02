@@ -1,11 +1,16 @@
 # syntax=docker/dockerfile:1.7
 #
-# Naive single-stage build for the polyglot monorepo.
-# Everything — Python, TypeScript, and Rust toolchains plus every workspace
-# source file — lives in one image, baked in one COPY layer. This is the
-# baseline we will improve against in the rest of the tutorial.
+# Multistage build for the polyglot monorepo.
+# Each toolchain (uv, bun, cargo) gets its own dedicated dependency
+# stage. Editing a Python source file no longer invalidates the bun
+# install or cargo fetch layers, because each dependency stage only
+# COPYs the manifest files its package manager actually reads.
+#
+# Cache mounts and the lockfile-only copy trick land in later steps;
+# this step is only the structural split.
 
-FROM debian:12-slim
+# ---- Shared toolchain base ---------------------------------------------
+FROM debian:12-slim AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH=/root/.cargo/bin:/root/.local/bin:/root/.bun/bin:$PATH
@@ -25,8 +30,34 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
 
 WORKDIR /workspace
 
-COPY . .
+# ---- Python dependency stage -------------------------------------------
+FROM base AS uv-deps
 
-RUN uv sync \
-    && bun install \
-    && cargo fetch
+COPY pyproject.toml ./
+COPY services/api/pyproject.toml services/api/pyproject.toml
+RUN uv sync --no-install-project --no-dev || uv sync --no-install-project
+
+# ---- TypeScript dependency stage ---------------------------------------
+FROM base AS bun-deps
+
+COPY package.json ./
+COPY services/web/package.json services/web/package.json
+RUN bun install --no-save
+
+# ---- Rust dependency stage ---------------------------------------------
+FROM base AS cargo-deps
+
+COPY Cargo.toml Cargo.lock ./
+COPY services/edge/Cargo.toml services/edge/Cargo.toml
+RUN cargo fetch
+
+# ---- Runtime stage that consumes resolved deps -------------------------
+FROM base AS runtime
+
+WORKDIR /workspace
+
+COPY --from=uv-deps /workspace/.venv /workspace/.venv
+COPY --from=bun-deps /workspace/node_modules /workspace/node_modules
+COPY --from=cargo-deps /root/.cargo/registry /root/.cargo/registry
+
+COPY . .
