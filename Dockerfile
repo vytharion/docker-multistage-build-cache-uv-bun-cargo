@@ -1,13 +1,11 @@
 # syntax=docker/dockerfile:1.7
 #
 # Multistage build for the polyglot monorepo.
-# Each toolchain (uv, bun, cargo) gets its own dedicated dependency
-# stage. Editing a Python source file no longer invalidates the bun
-# install or cargo fetch layers, because each dependency stage only
-# COPYs the manifest files its package manager actually reads.
-#
-# Cache mounts and the lockfile-only copy trick land in later steps;
-# this step is only the structural split.
+# Step 4 attaches BuildKit cache mounts to the cargo-deps stage so the
+# registry, git index, and target directory survive across builds.
+# Cache mounts are ephemeral per-RUN, so the registry is materialized
+# into a non-mounted directory at the end of the fetch step; the runtime
+# stage consumes that snapshot instead of the live mount.
 
 # ---- Shared toolchain base ---------------------------------------------
 FROM debian:12-slim AS base
@@ -49,7 +47,12 @@ FROM base AS cargo-deps
 
 COPY Cargo.toml Cargo.lock ./
 COPY services/edge/Cargo.toml services/edge/Cargo.toml
-RUN cargo fetch
+RUN --mount=type=cache,id=cargo-registry,target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,id=cargo-git,target=/root/.cargo/git,sharing=locked \
+    --mount=type=cache,id=cargo-target,target=/workspace/target,sharing=locked \
+    cargo fetch \
+    && mkdir -p /workspace/.cargo-cache \
+    && cp -a /root/.cargo/registry /workspace/.cargo-cache/registry
 
 # ---- Runtime stage that consumes resolved deps -------------------------
 FROM base AS runtime
@@ -58,6 +61,6 @@ WORKDIR /workspace
 
 COPY --from=uv-deps /workspace/.venv /workspace/.venv
 COPY --from=bun-deps /workspace/node_modules /workspace/node_modules
-COPY --from=cargo-deps /root/.cargo/registry /root/.cargo/registry
+COPY --from=cargo-deps /workspace/.cargo-cache/registry /root/.cargo/registry
 
 COPY . .

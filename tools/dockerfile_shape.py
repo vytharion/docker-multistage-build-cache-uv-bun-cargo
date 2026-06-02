@@ -69,6 +69,60 @@ def mentions(lines: list[str], needle: str) -> bool:
     return any(needle in line for line in lines)
 
 
+def cache_mount_targets(lines: list[str]) -> list[str]:
+    targets: list[str] = []
+    for line in lines:
+        targets.extend(_extract_cache_targets_from_line(line))
+    return targets
+
+
+def stage_cache_mount_targets(lines: list[str], stage: str) -> list[str]:
+    targets: list[str] = []
+    for line in _lines_in_stage(lines, stage):
+        targets.extend(_extract_cache_targets_from_line(line))
+    return targets
+
+
+def count_cache_mounts(lines: list[str]) -> int:
+    return len(cache_mount_targets(lines))
+
+
+def _lines_in_stage(lines: list[str], stage: str) -> list[str]:
+    inside = False
+    collected: list[str] = []
+    for line in lines:
+        if _is_from_line(line):
+            inside = _extract_stage_name(line) == stage
+            continue
+        if inside:
+            collected.append(line)
+    return collected
+
+
+def _extract_cache_targets_from_line(line: str) -> list[str]:
+    if "--mount=type=cache" not in line:
+        return []
+    targets: list[str] = []
+    for token in line.split():
+        if not token.startswith("--mount="):
+            continue
+        target = _parse_mount_target(token)
+        if target:
+            targets.append(target)
+    return targets
+
+
+def _parse_mount_target(token: str) -> str | None:
+    payload = token.split("=", 1)[1]
+    fields = payload.split(",")
+    if "type=cache" not in fields:
+        return None
+    for field in fields:
+        if field.startswith("target="):
+            return field.split("=", 1)[1]
+    return None
+
+
 def _is_from_line(line: str) -> bool:
     return line.strip().upper().startswith("FROM ")
 
