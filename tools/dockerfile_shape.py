@@ -87,6 +87,28 @@ def count_cache_mounts(lines: list[str]) -> int:
     return len(cache_mount_targets(lines))
 
 
+def stage_copy_sources(lines: list[str], stage: str) -> list[str]:
+    sources: list[str] = []
+    for line in _lines_in_stage(lines, stage):
+        sources.extend(_extract_copy_sources(line))
+    return sources
+
+
+def stage_copies_path(lines: list[str], stage: str, path: str) -> bool:
+    return path in stage_copy_sources(lines, stage)
+
+
+def _extract_copy_sources(line: str) -> list[str]:
+    stripped = line.strip()
+    if not stripped.upper().startswith("COPY "):
+        return []
+    tokens = stripped.split()[1:]
+    operands = [token for token in tokens if not token.startswith("--")]
+    if len(operands) < 2:
+        return []
+    return operands[:-1]
+
+
 def _lines_in_stage(lines: list[str], stage: str) -> list[str]:
     inside = False
     collected: list[str] = []

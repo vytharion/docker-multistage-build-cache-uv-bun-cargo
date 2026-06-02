@@ -11,6 +11,8 @@ from dockerfile_shape import (
     mentions,
     read_dockerfile_lines,
     stage_cache_mount_targets,
+    stage_copies_path,
+    stage_copy_sources,
     stage_names,
 )
 
@@ -130,3 +132,50 @@ def test_cache_mounts_only_attach_to_dep_stages():
 def test_cache_mount_targets_are_absolute_paths():
     for target in cache_mount_targets(_lines()):
         assert target.startswith("/"), f"non-absolute cache mount target: {target}"
+
+
+ALLOWED_LOCKFILE_SOURCES = {
+    "uv-deps": {"pyproject.toml", "uv.lock", "services/api/pyproject.toml"},
+    "bun-deps": {"package.json", "services/web/package.json"},
+    "cargo-deps": {"Cargo.toml", "Cargo.lock", "services/edge/Cargo.toml"},
+}
+
+
+def test_uv_deps_copies_root_lockfile():
+    assert stage_copies_path(_lines(), "uv-deps", "uv.lock")
+
+
+def test_cargo_deps_copies_root_lockfile():
+    assert stage_copies_path(_lines(), "cargo-deps", "Cargo.lock")
+
+
+def test_dep_stages_only_copy_manifest_or_lockfiles():
+    lines = _lines()
+    for stage, allowed in ALLOWED_LOCKFILE_SOURCES.items():
+        sources = stage_copy_sources(lines, stage)
+        assert sources, f"{stage} has no COPY instructions"
+        unexpected = [src for src in sources if src not in allowed]
+        assert unexpected == [], f"{stage} copies non-lockfile sources: {unexpected}"
+
+
+def test_dep_stages_never_copy_whole_workspace():
+    lines = _lines()
+    for stage in ALLOWED_LOCKFILE_SOURCES:
+        sources = stage_copy_sources(lines, stage)
+        assert "." not in sources, f"{stage} copies the whole context"
+        for src in sources:
+            assert not src.startswith("services/api/src"), src
+            assert not src.startswith("services/edge/src"), src
+            assert not src.startswith("services/web/src"), src
+
+
+def test_dep_stages_never_copy_source_directories():
+    lines = _lines()
+    for stage in ALLOWED_LOCKFILE_SOURCES:
+        for src in stage_copy_sources(lines, stage):
+            assert "/src" not in src, f"{stage} reaches into a /src tree: {src}"
+
+
+def test_runtime_stage_does_copy_full_context():
+    sources = stage_copy_sources(_lines(), "runtime")
+    assert "." in sources, sources

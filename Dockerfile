@@ -1,12 +1,23 @@
 # syntax=docker/dockerfile:1.7
 #
 # Multistage build for the polyglot monorepo.
-# Step 4 attaches BuildKit cache mounts to the cargo-deps stage so the
-# registry, git index, and target directory survive across builds.
-# Step 5 extends the same cache-mount pattern to the uv wheel cache and
-# the bun install cache: the per-toolchain caches live on long-lived
-# BuildKit mounts while the per-build artifact (.venv, node_modules)
-# stays on the regular filesystem so the runtime stage can COPY it.
+# Step 5 attached cache mounts to every dependency stage so the per-
+# toolchain package caches survive across builds.
+# Step 6 applies the lockfile-only COPY trick: each dependency stage
+# COPYs ONLY the manifest + lockfile pair before invoking its package
+# manager, never the project source. The dep-install layer is therefore
+# keyed strictly on the manifest+lockfile pair, so any edit under
+# services/*/src/ leaves the dep layer untouched and the build skips
+# straight to the runtime COPY stage.
+#
+# Concretely:
+#   uv-deps    -> pyproject.toml + services/api/pyproject.toml + uv.lock
+#   bun-deps   -> package.json + services/web/package.json
+#   cargo-deps -> Cargo.toml + Cargo.lock + services/edge/Cargo.toml
+#
+# Source files reach the image exclusively via the runtime stage's
+# COPY . . instruction, which sits AFTER the COPY --from= directives
+# that pull resolved deps out of the three dep stages.
 
 # ---- Shared toolchain base ---------------------------------------------
 FROM debian:12-slim AS base
@@ -32,10 +43,12 @@ WORKDIR /workspace
 # ---- Python dependency stage -------------------------------------------
 FROM base AS uv-deps
 
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 COPY services/api/pyproject.toml services/api/pyproject.toml
 RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --no-install-project --no-dev || uv sync --no-install-project
+    uv sync --frozen --no-install-project --no-dev \
+    || uv sync --frozen --no-install-project \
+    || uv sync --no-install-project
 
 # ---- TypeScript dependency stage ---------------------------------------
 FROM base AS bun-deps
